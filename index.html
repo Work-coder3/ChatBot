@@ -254,7 +254,6 @@
 </div>
 
 <script>
-  const API_KEY = "YOUR_API_KEY"
 
 const SYSTEM_PROMPT = `คุณคือ IT Assistant ประจำองค์กร ช่วยแก้ปัญหาคอมพิวเตอร์และ Windows ให้ User ทั่วไป
 ตอบภาษาไทย กระชับ เข้าใจง่าย ไม่ใช้ศัพท์เทคนิคมากเกินไป
@@ -307,22 +306,21 @@ const SYSTEM_PROMPT = `คุณคือ IT Assistant ประจำองค�
     let typingId = addMessage("กำลังวิเคราะห์ปัญหา...", "bot typing")
 
     let response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer " + API_KEY
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: question }
-          ]
-        })
-      }
-    )
+  "https://chatbot-api.workgame098.workers.dev",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: question }
+      ]
+    })
+  }
+)
 
     let data = await response.json()
     let typingEl = document.getElementById(typingId)
