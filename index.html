@@ -323,6 +323,7 @@ const SYSTEM_PROMPT = `คุณคือ IT Assistant ประจำองค�
 )
 
     let data = await response.json()
+    console.log(data) 
     let typingEl = document.getElementById(typingId)
     if (typingEl) typingEl.remove()
 
