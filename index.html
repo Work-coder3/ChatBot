@@ -88,6 +88,11 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      .message { animation: none; }
+      #chat-box { scroll-behavior: auto; }
+    }
+
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
 
     .avatar {
@@ -106,6 +111,7 @@
       font-size: 14px;
       line-height: 1.7;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .message.bot .bubble {
@@ -123,34 +129,14 @@
 
     .typing .bubble { color: #60a5fa; font-style: italic; }
 
-    /* Category tabs */
-    .categories {
-      padding: 10px 20px 4px;
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      border-bottom: 1px solid #1e3a5f;
-    }
-
-    .categories::-webkit-scrollbar { display: none; }
-
-    .cat-btn {
-      background: transparent;
-      border: 1px solid #1e3a5f;
-      color: #60a5fa;
-      padding: 5px 12px;
-      border-radius: 20px;
+    .notice {
+      align-self: center;
       font-size: 12px;
-      cursor: pointer;
-      white-space: nowrap;
-      font-family: inherit;
-      transition: all 0.15s;
-    }
-
-    .cat-btn:hover, .cat-btn.active {
-      background: #0078d4;
-      border-color: #0078d4;
-      color: #fff;
+      color: #fbbf24;
+      background: rgba(251, 191, 36, 0.08);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 8px;
+      padding: 6px 12px;
     }
 
     /* Suggestions */
@@ -181,12 +167,19 @@
     }
 
     .input-area {
-      padding: 16px 20px;
+      padding: 16px 20px 8px;
       background: #0a0e1a;
       border-top: 1px solid #1e3a5f;
       display: flex;
       gap: 10px;
       align-items: center;
+    }
+
+    .privacy-note {
+      background: #0a0e1a;
+      padding: 0 20px 12px;
+      font-size: 11px;
+      color: #64748b;
     }
 
     #user-input {
@@ -217,7 +210,10 @@
     }
 
     #send-btn:hover { background: #0065b3; }
+    #send-btn:disabled { background: #1e3a5f; cursor: not-allowed; }
     #send-btn svg { width: 18px; height: 18px; fill: white; }
+
+    button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -245,125 +241,142 @@
   <div class="suggestions" id="suggestions"></div>
 
   <div class="input-area">
-    <input id="user-input" type="text" placeholder="อธิบายปัญหา Server ของคุณ..." />
-    <button id="send-btn" onclick="sendMessage()">
-      <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+    <input id="user-input" type="text" maxlength="4000" placeholder="อธิบายปัญหา Server ของคุณ..." aria-label="พิมพ์คำถาม" />
+    <button id="send-btn" aria-label="ส่งข้อความ">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
     </button>
   </div>
+  <div class="privacy-note">ห้ามพิมพ์รหัสผ่าน ข้อมูลลูกค้า หรือข้อมูลลับขององค์กร · คำตอบจาก AI ควรตรวจสอบก่อนใช้กับเครื่องจริง</div>
 
 </div>
 
 <script>
+  const API_URL = "https://chatbot-api.workgame098.workers.dev"
+  const MAX_HISTORY = 20
 
-const SYSTEM_PROMPT = `คุณคือ IT Assistant ประจำองค์กร ช่วยแก้ปัญหาคอมพิวเตอร์และ Windows ให้ User ทั่วไป
-ตอบภาษาไทย กระชับ เข้าใจง่าย ไม่ใช้ศัพท์เทคนิคมากเกินไป
-ถ้ามีขั้นตอนให้เรียงเป็นข้อ
+  const suggestions = [
+    "วิธีอัปเดต Windows 11",
+    "อัปเดตค้างอยู่ทำไง",
+    "อัปเดตแล้วเครื่องช้าลง"
+  ]
 
-สิ่งที่ช่วยได้:
-- อัปเดต Windows และแก้ปัญหาการอัปเดต
-- คอมช้า ค้าง หรือเปิดไม่ติด
-- Wi-Fi หรือ internet ใช้ไม่ได้
-- Printer ไม่ทำงาน
-- ลืมรหัสผ่าน Windows
-- โปรแกรมทั่วไปเปิดไม่ได้หรือ error
-- ไฟล์หาย ลบไปแล้วกู้คืน
-- ไวรัสหรือโปรแกรมแปลกๆ
-- คำถามทั่วไปเกี่ยวกับการใช้งาน Windows
+  // เก็บบทสนทนาเพื่อให้บอทจำเรื่องที่คุยก่อนหน้าได้
+  let history = []
+  let busy = false
+  let msgCounter = 0
 
-ถ้าไม่สามารถช่วยได้หรือปัญหาซับซ้อนเกินไป ให้ตอบว่า:
-"เรื่องนี้เกินขอบเขตที่ผมช่วยได้ครับ แนะนำให้ติดต่อทีม IS โดยตรงได้เลยนะครับ"`
+  const chatBox = document.getElementById("chat-box")
+  const userInput = document.getElementById("user-input")
+  const sendBtn = document.getElementById("send-btn")
 
-  const suggestionMap = {
-    all: [
-      "วิธีอัปเดต Windows 11",
-      "อัปเดตค้างอยู่ทำไง",
-      "อัปเดตแล้วเครื่องช้าลง"
-    ]
-  }
-
-  function setCategory(cat, btn) {
-    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'))
-    btn.classList.add('active')
-    renderSuggestions(cat)
-  }
-
-  function renderSuggestions(cat) {
-    let container = document.getElementById("suggestions")
-    let items = suggestionMap[cat] || suggestionMap.all
-    container.innerHTML = items.map(s =>
-      `<button class="suggestion-btn" onclick="askSuggestion('${s}')">${s}</button>`
-    ).join("")
-  }
-
-  async function sendMessage() {
-    let userInput = document.getElementById("user-input")
-    let question = userInput.value.trim()
-    if (question === "") return
-
-    addMessage(question, "user")
-    userInput.value = ""
-
-    let typingId = addMessage("กำลังวิเคราะห์ปัญหา...", "bot typing")
-
-    let response = await fetch(
-  "https://chatbot-api.workgame098.workers.dev",
-  {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: question }
-      ]
+  function renderSuggestions() {
+    const container = document.getElementById("suggestions")
+    container.textContent = ""
+    suggestions.forEach(s => {
+      const btn = document.createElement("button")
+      btn.className = "suggestion-btn"
+      btn.textContent = s
+      btn.addEventListener("click", () => {
+        userInput.value = s
+        sendMessage()
+      })
+      container.appendChild(btn)
     })
   }
-)
 
-    let data = await response.json()
-    console.log(data) 
-    let typingEl = document.getElementById(typingId)
-    if (typingEl) typingEl.remove()
-
-    if (!data.choices) {
-      addMessage("ขออภัยครับ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง", "bot")
-      return
-    }
-
-    addMessage(data.choices[0].message.content, "bot")
-  }
-
+  // ใช้ textContent เสมอ ป้องกันการแทรกโค้ด HTML/JavaScript (XSS)
   function addMessage(text, type) {
-    let chatBox = document.getElementById("chat-box")
-    let id = "msg-" + Date.now()
-    let isUser = type.includes("user")
-    let isTyping = type.includes("typing")
+    const id = "msg-" + (++msgCounter)
+    const isUser = type.includes("user")
+    const isTyping = type.includes("typing")
 
-    let div = document.createElement("div")
+    const div = document.createElement("div")
     div.className = "message " + (isUser ? "user" : "bot") + (isTyping ? " typing" : "")
     div.id = id
-    div.innerHTML = `
-      <div class="avatar">${isUser ? "👤" : "🖥️"}</div>
-      <div class="bubble">${text}</div>
-    `
+
+    const avatar = document.createElement("div")
+    avatar.className = "avatar"
+    avatar.textContent = isUser ? "👤" : "🖥️"
+
+    const bubble = document.createElement("div")
+    bubble.className = "bubble"
+    bubble.textContent = text
+
+    div.append(avatar, bubble)
     chatBox.appendChild(div)
     chatBox.scrollTop = chatBox.scrollHeight
     return id
   }
 
-  function askSuggestion(text) {
-    document.getElementById("user-input").value = text
-    sendMessage()
+  function addNotice(text) {
+    const div = document.createElement("div")
+    div.className = "notice"
+    div.textContent = text
+    chatBox.appendChild(div)
+    chatBox.scrollTop = chatBox.scrollHeight
   }
 
-  document.getElementById("user-input").addEventListener("keydown", e => {
-    if (e.key === "Enter") sendMessage()
+  function errorText(status) {
+    if (status === 429) return "ตอนนี้มีผู้ใช้งานเยอะ กรุณารอสักครู่แล้วลองใหม่ครับ"
+    if (status === 403) return "ไม่สามารถเชื่อมต่อได้จากหน้านี้ กรุณาแจ้งทีม IS ครับ"
+    return "เกิดข้อผิดพลาดในการเชื่อมต่อ กรุณาลองใหม่อีกครั้ง หากยังไม่ได้ให้แจ้งทีม IS ครับ"
+  }
+
+  async function sendMessage() {
+    const question = userInput.value.trim()
+    if (question === "" || busy) return
+
+    busy = true
+    sendBtn.disabled = true
+
+    addMessage(question, "user")
+    userInput.value = ""
+    history.push({ role: "user", content: question })
+    history = history.slice(-MAX_HISTORY)
+
+    const typingId = addMessage("กำลังวิเคราะห์ปัญหา...", "bot typing")
+
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history })
+      })
+
+      const data = await response.json().catch(() => ({}))
+      document.getElementById(typingId)?.remove()
+
+      const reply = data.choices?.[0]?.message?.content
+      if (!response.ok || !reply) {
+        history.pop() // เอาคำถามที่ไม่ได้คำตอบออก จะได้ถามใหม่ได้
+        addMessage(errorText(response.status), "bot")
+        return
+      }
+
+      if (data.redacted) {
+        addNotice("ระบบปิดบังข้อมูลที่ดูเหมือนรหัสผ่านหรือข้อมูลลับก่อนส่งแล้ว กรุณาอย่าใส่ข้อมูลเหล่านี้ในแชท")
+      }
+
+      addMessage(reply, "bot")
+      history.push({ role: "assistant", content: reply })
+
+    } catch (err) {
+      document.getElementById(typingId)?.remove()
+      history.pop()
+      addMessage(errorText(0), "bot")
+    } finally {
+      busy = false
+      sendBtn.disabled = false
+      userInput.focus()
+    }
+  }
+
+  sendBtn.addEventListener("click", sendMessage)
+  userInput.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.isComposing) sendMessage()
   })
 
-  // โหลด suggestions เริ่มต้น
-  renderSuggestions("all")
+  renderSuggestions()
 </script>
 
 </body>
